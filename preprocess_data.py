@@ -44,7 +44,7 @@ def add_start_end_tags(sent_tokens):
 
 
 def generate_tokenized_dataset(pdframe,save_path,tokenizer_func,punctuations_to_remove=""):
-    pandarallel.initialize(progress_bar=False)
+    pandarallel.initialize(progress_bar=True)
     print("Processing article tag, will be saved at :{}".format(save_path))
     # Replace article with the list of tokenizer version
     pdframe["article"] = pdframe["article"].parallel_apply(lambda x: tokenizer_func(x,punctuations_to_remove=punctuations_to_remove))
@@ -52,8 +52,12 @@ def generate_tokenized_dataset(pdframe,save_path,tokenizer_func,punctuations_to_
     pdframe["highlights"] = pdframe["highlights"].parallel_apply(lambda x: add_start_end_tags(tokenizer_func(x,punctuations_to_remove=punctuations_to_remove)))
 
     filepath = Path(save_path)
-    filepath.parent.mkdir(parents=True, exist_ok=True)  
+    filepath.parent.mkdir(parents=True, exist_ok=True)
     pdframe.to_csv(filepath)
+    save_path = save_path.replace(".csv",".pkl")
+    filepath = Path(save_path)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    pdframe.to_pickle(filepath)
 
 if __name__ == '__main__':
     STRT = "<START>"
