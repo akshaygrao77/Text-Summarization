@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from ast import literal_eval
 import os
+from sklearn.feature_extraction.text import CountVectorizer
 
 STRT = "<START>"
 END = "<END>"
@@ -57,8 +58,11 @@ def add_UNK_STRT_END_to_W2V(word2vec_obj_list):
         # Having the highest frequency count for PAD is necessary in our design bcoz we assume that index 0 indicates PADDING and for that to happen it has to be of highest frequency
         word_vec_obj.set_vecattr(PAD,"count",15000011)
 
-def get_combined_frequency(wordvec_obj_list,key):
-    overall_freq = 0
+def get_combined_frequency(wordvec_obj_list,key,freq_local_vocab=None):
+    if freq_local_vocab is None:
+        overall_freq = 0
+    else:
+        overall_freq = freq_local_vocab.get(key,0)
     for word_vec_obj in wordvec_obj_list:
         if key in word_vec_obj:
             try:
@@ -68,13 +72,14 @@ def get_combined_frequency(wordvec_obj_list,key):
     
     return overall_freq
 
-def form_overall_key_to_index(wordvec_obj_list):
+def form_overall_key_to_index(wordvec_obj_list,freq_local_vocab=None,local_vocab_key_to_indx=None):
     overall_keys = set()
     for word_vec_obj in wordvec_obj_list:
         overall_keys.update(list(word_vec_obj.key_to_index.keys()))
+    overall_keys.update(local_vocab_key_to_indx.keys())
     
     # Order such that highest frequency keys are in the beginning. This is required for doing adaptivelogsoftmax
-    ret = sorted(overall_keys,reverse=True, key=lambda item: get_combined_frequency(wordvec_obj_list,item))
+    ret = sorted(overall_keys,reverse=True, key=lambda item: get_combined_frequency(wordvec_obj_list,item,freq_local_vocab))
     ret_dict = {ret[i]:i for i in range(len(ret))}
     return ret_dict,ret
 
@@ -128,6 +133,28 @@ def sentence_vectorizer_using_wordembed(sent_tokens,word_vector_obj_list):
         res_list.append(np.concatenate(overall_word_rep,axis=-1))
     
     return np.stack(res_list)
+
+
+def generate_local_vocab_word_dict(processed_train_data,list_of_keys_to_merge=["article","highlights"],min_df=0.03):
+    # This min_df is important to use. Bcoz otherwise some rare words are part of vocabualary unnecessarily
+    vectorizer = CountVectorizer(analyzer=lambda x: x.split(),min_df=min_df)
+    df_col_merged = processed_train_data[list_of_keys_to_merge[0]]
+    for p in range(1,len(list_of_keys_to_merge)):
+        df_col_merged = df_col_merged + processed_train_data[list_of_keys_to_merge[p]]
+    corpus_as_list = []
+    for index in range(len(df_col_merged)):
+        corpus_as_list.append(' '.join(df_col_merged.iloc[index]))
+    
+    cv_fit = vectorizer.fit_transform(corpus_as_list)
+    freq_local_vocab = cv_fit.toarray().sum(axis=0)
+    freq_local_vocab = {item:freq_local_vocab[vectorizer.vocabulary_[item]] for item in vectorizer.vocabulary_}
+
+    ret = [PAD,UNK]
+    tmp = sorted(vectorizer.vocabulary_.keys(),reverse=True, key=lambda item: freq_local_vocab[item])
+    ret.extend(tmp)
+    local_vocab_key_to_indx = {ret[i]:i for i in range(len(ret))}
+
+    return local_vocab_key_to_indx,ret,freq_local_vocab
 
 def convert_tokens_to_indices(sent_tokens,overall_key_to_index):
     res_list = []
@@ -207,7 +234,7 @@ def custom_collate(original_batch):
 
 
 class TextSummarizationDataset(Dataset):
-    def __init__(self, pandas_frame,tokenizer_func,punctuations_to_remove,word_vector_obj_list=[],is_remove_stopwords=False,src_transform=None,target_transform=None,overall_key_to_index=None,src_sent_key="article",target_sent_key="highlights"):
+    def __init__(self, pandas_frame,tokenizer_func,punctuations_to_remove,word_vector_obj_list=[],is_remove_stopwords=False,src_transform=None,target_transform=None,overall_key_to_index=None,local_key_to_index=None,src_sent_key="article",target_sent_key="highlights"):
         """
         pandas_frame: pandas frame to read data from
         src_sent_key: key in pandas frame whose value acts as source sentence
@@ -228,6 +255,7 @@ class TextSummarizationDataset(Dataset):
         self.punctuations_to_remove = punctuations_to_remove
         self.word_vector_obj_list = word_vector_obj_list
         self.overall_key_to_index = overall_key_to_index
+        self.local_key_to_index = local_key_to_index
 
     def __len__(self):
         return len(self.pandas_frame)
@@ -254,9 +282,9 @@ class TextSummarizationDataset(Dataset):
         target_seq = None
         source_vec = None
         target_vec = None
-        if self.overall_key_to_index:
-            source_seq = convert_tokens_to_indices(source_token,self.overall_key_to_index)
-            target_seq = convert_tokens_to_indices(target_token,self.overall_key_to_index)
+        if self.overall_key_to_index is not None and self.local_key_to_index is not None:
+            source_seq = convert_tokens_to_indices(source_token,self.local_key_to_index)
+            target_seq = convert_tokens_to_indices(target_token,self.local_key_to_index)
             label_seq = convert_tokens_to_indices(label_token,self.overall_key_to_index)
         
         # These transform functions are sentence/doc vectorizers

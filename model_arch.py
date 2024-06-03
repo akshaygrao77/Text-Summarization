@@ -4,17 +4,24 @@ import torch.nn as nn
 class LSTM_CNN_Arch_With_Attention(nn.Module):
     def __init__(self, model_config):
         super(LSTM_CNN_Arch_With_Attention, self).__init__()
-        num_enc_lstm_layers,embed_size,enc_input_size,enc_hidden_size,vocab_size,num_dec_lstm_layers,dec_hidden_size = model_config["num_enc_lstm_layers"],model_config["embed_size"],model_config["enc_input_size"],model_config["enc_hidden_size"],model_config["vocab_size"],model_config["num_dec_lstm_layers"],model_config["dec_hidden_size"]
-        self.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu")
+        num_enc_lstm_layers,embed_size,enc_input_size,enc_hidden_size,local_vocab_size,vocab_size,num_dec_lstm_layers,dec_hidden_size,is_use_cuda = model_config["num_enc_lstm_layers"],model_config["embed_size"],model_config["enc_input_size"],model_config["enc_hidden_size"],model_config["local_vocab_size"],model_config["vocab_size"],model_config["num_dec_lstm_layers"],model_config["dec_hidden_size"],model_config.get("is_use_cuda",True)
+        if not is_use_cuda:
+            self.device = "cpu"
+        else:
+            self.device = torch.device(
+                "cuda" if torch.cuda.is_available() else "cpu")
         self.vocab_size = vocab_size
-        self.encoder = Enc_LSTM_CNN_Arch(num_enc_lstm_layers,embed_size,enc_input_size,enc_hidden_size,vocab_size)
-        self.decoder = Dec_LSTM_CNN_Arch(num_dec_lstm_layers,embed_size,dec_hidden_size,vocab_size)
+        self.local_vocab_size = local_vocab_size
+        self.encoder = Enc_LSTM_CNN_Arch(num_enc_lstm_layers,embed_size,enc_input_size,enc_hidden_size,local_vocab_size,is_use_cuda)
+        print("self.encoder",sum(p.numel() for p in self.encoder.parameters()))
+        self.decoder = Dec_LSTM_CNN_Arch(num_dec_lstm_layers,embed_size,dec_hidden_size,local_vocab_size,is_use_cuda)
+        print("self.decoder",sum(p.numel() for p in self.decoder.parameters()))
         self.attention_layer = nn.MultiheadAttention(embed_dim=dec_hidden_size, num_heads=4,kdim=2*enc_hidden_size, vdim=2*enc_hidden_size, batch_first=True, device=self.device)
         # AdaptiveLogSoftmaxWithLoss decreases the compute time drastically when vocab size is massive by forming clusters and doing kind of hierarchical clustering based softmax
         # The cutoffs are set seeing the frequency distribution graph of the W2V vocab words
-        self.adapt_smax_layer = nn.AdaptiveLogSoftmaxWithLoss(2*dec_hidden_size, vocab_size,cutoffs=[5000*10,5000*50,5000*150,5000*350],div_value=2.0,device=self.device)
-        print(sum(p.numel() for p in self.encoder.parameters()),sum(p.numel() for p in self.decoder.parameters()),sum(p.numel() for p in self.attention_layer.parameters()),sum(p.numel() for p in self.adapt_smax_layer.parameters()))
+        # The vocab size is global vocabulary whereas for encoder and decoder inputs vocab size is local vocabulary words(This is necessary bcoz embedding size would be massive otherwise)
+        self.adapt_smax_layer = nn.AdaptiveLogSoftmaxWithLoss(2*dec_hidden_size, vocab_size,cutoffs=[5000*10,5000*25,5000*100,5000*350],div_value=2.0,device=self.device)
+        print("self.adapt_smax_layer",sum(p.numel() for p in self.adapt_smax_layer.parameters()))
         # self.classification_layer = nn.Linear(2*enc_hidden_size, vocab_size,device=self.device) This doesn't work since vocab size is massive and this single operation becomes the bottleneck
         
     def forward(self, overall_inp,wordvec_obj_list=None,vectorizer_func=None,index_func=None):
@@ -26,10 +33,10 @@ class LSTM_CNN_Arch_With_Attention(nn.Module):
         # print("key_attention_mask:{}".format(key_attention_mask.size()))
         # key_attention_mask = torch.where(enc_ind_embed == 0,True,key_attention_mask)
         enc_out,(_,_) = self.encoder(enc_w2v_embed,enc_ind_embed)
-        print("enc_out",enc_out.size())
+        # print("enc_out",enc_out.size())
         if dec_w2v_embed is not None:
             dec_out,(_,_) = self.decoder(dec_w2v_embed,dec_ind_embed)
-            print("dec_out",dec_out.size())
+            # print("dec_out",dec_out.size())
             attn_out,_ = self.attention_layer(query=dec_out, key=enc_out, value=enc_out, need_weights=False)
             attn_out = torch.cat((attn_out,dec_out),dim=2)
             # print("attn_out :{}".format(attn_out.size()))
@@ -60,13 +67,13 @@ class LSTM_CNN_Arch_With_Attention(nn.Module):
             if index_func is None:
                 index_func = convert_tokens_to_indices
             is_done = torch.zeros((cur_bs_size),device=self.device).long()
-            while(torch.sum(is_done)<cur_bs_size and len(output)<1000):
+            while(torch.sum(is_done)<cur_bs_size and len(output)<2000):
                 if(cur_output is None):
                     cur_output = [STRT] * cur_bs_size
                 else:
                     cur_output = [overall_index_to_key[ind.item()] for ind in cur_output]
                 dec_w2v_embed = torch.unsqueeze(torch.from_numpy(vectorizer_func(cur_output,wordvec_obj_list)),dim=1)
-                dec_ind_embed = torch.unsqueeze(torch.tensor(index_func(cur_output,overall_key_to_index)),dim=1)
+                dec_ind_embed = torch.unsqueeze(torch.tensor(index_func(cur_output,local_vocab_key_to_indx)),dim=1)
                 # print("dec_w2v_embed:{} dec_ind_embed:{}".format(dec_w2v_embed.size(),dec_ind_embed.size()))
 
                 dec_out,(dec_h_out,dec_c_out) = self.decoder(dec_w2v_embed,dec_ind_embed,dec_h_out,dec_c_out)
@@ -85,10 +92,13 @@ class LSTM_CNN_Arch_With_Attention(nn.Module):
 
 
 class Enc_LSTM_CNN_Arch(nn.Module):
-    def __init__(self, num_enc_lstm_layers,embed_size,enc_input_size,enc_hidden_size,vocab_size):
+    def __init__(self, num_enc_lstm_layers,embed_size,enc_input_size,enc_hidden_size,vocab_size,is_use_cuda=True):
         super(Enc_LSTM_CNN_Arch, self).__init__()
-        self.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu")
+        if not is_use_cuda:
+            self.device = "cpu"
+        else:
+            self.device = torch.device(
+                "cuda" if torch.cuda.is_available() else "cpu")
         self.enc_lstm = nn.LSTM(enc_input_size, enc_hidden_size, num_layers=num_enc_lstm_layers, dropout=0.3, bidirectional=True,batch_first=True, device=self.device)
         # Size of feature obtained from Word2Vec and embedding layer better be same to contribute equally(i.e given task embedding size and general W2V embedding size is same)
         self.enc_embed_layer = nn.Embedding(vocab_size,embed_size,device=self.device)
@@ -105,9 +115,7 @@ class Enc_LSTM_CNN_Arch(nn.Module):
         enc_ind_embed = self.enc_embed_layer(enc_ind_embed)
         # This will make the embedding zero at padding points
         enc_ind_embed = torch.where(tmp == 0,torch.zeros((enc_ind_embed.size()[-1]),device=self.device),enc_ind_embed)
-        tmp = tmp.cpu()
-        del tmp
-        torch.cuda.empty_cache()
+        
         conv_inp = torch.stack((enc_w2v_embed,enc_ind_embed),dim=1)
         # print("conv_inp :{}".format(conv_inp.size()))
         conv_inp = self.enc_cnn(conv_inp)
@@ -120,10 +128,13 @@ class Enc_LSTM_CNN_Arch(nn.Module):
 
 
 class Dec_LSTM_CNN_Arch(nn.Module):
-    def __init__(self, num_dec_lstm_layers,embed_size,dec_hidden_size,vocab_size):
+    def __init__(self, num_dec_lstm_layers,embed_size,dec_hidden_size,vocab_size,is_use_cuda=True):
         super(Dec_LSTM_CNN_Arch, self).__init__()
-        self.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu")
+        if not is_use_cuda:
+            self.device = "cpu"
+        else:
+            self.device = torch.device(
+                "cuda" if torch.cuda.is_available() else "cpu")
         self.dec_lstm = nn.LSTM(2*embed_size, dec_hidden_size, num_layers=num_dec_lstm_layers, dropout=0.3, bidirectional=False,batch_first=True, device=self.device)
         self.dec_embed_layer = nn.Embedding(vocab_size,embed_size,device=self.device)
         print("self.dec_embed_layer",sum(p.numel() for p in self.dec_embed_layer.parameters()))

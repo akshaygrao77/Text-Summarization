@@ -2,3 +2,4 @@ data/
 logs/
 processed_dataset/
 __pycache__/
+wandb/
