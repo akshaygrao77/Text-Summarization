@@ -104,7 +104,7 @@ def train_model(net, trainloader, validloader,optimizer, epochs, final_model_sav
             # print("src:{} tar:{} overall_dim:{}".format(data[0].size(),data[1].size(),data[0].shape[1]+data[1].shape[1]))
             # pass entire batch of all sequence to model.
             outputs_seq_ind,loss = net(data)
-            print(loss)
+            # print(loss)
             loss=torch.mean(loss)
             loss.backward()
             optimizer.step()
@@ -204,7 +204,7 @@ if __name__ == '__main__':
     model_config = {"num_enc_lstm_layers":3,"embed_size":w2v_vec_size,"enc_input_size":250,"enc_hidden_size":256,"local_vocab_size":local_vocab_size,"vocab_size":vocab_size,"num_dec_lstm_layers":4,"dec_hidden_size":220,"is_use_cuda":is_use_cuda}
     
     text_sum_model1 = LSTM_CNN_Arch_With_Attention(model_config)
-    optimizer = optim.Adam(text_sum_model1.parameters(), lr=0.01)
+    optimizer = optim.Adam(text_sum_model1.parameters(), lr=0.001)
     final_model_save_path = "/saved_model/LSTM_CNN_Arch/seq2seq_with_attention.pt"
 
     is_log_wandb = not(wand_project_name is None)
