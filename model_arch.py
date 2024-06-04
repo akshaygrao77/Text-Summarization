@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from utils.data_processing import *
 
 class LSTM_CNN_Arch_With_Attention(nn.Module):
     def __init__(self, model_config):
@@ -24,7 +25,7 @@ class LSTM_CNN_Arch_With_Attention(nn.Module):
         print("self.adapt_smax_layer",sum(p.numel() for p in self.adapt_smax_layer.parameters()))
         # self.classification_layer = nn.Linear(2*enc_hidden_size, vocab_size,device=self.device) This doesn't work since vocab size is massive and this single operation becomes the bottleneck
         
-    def forward(self, overall_inp,wordvec_obj_list=None,vectorizer_func=None,index_func=None):
+    def forward(self, overall_inp,wordvec_obj_list=None,vectorizer_func=None,index_func=None,local_vocab_key_to_indx=None,overall_key_to_index=None,overall_index_to_key=None):
         enc_w2v_embed,dec_w2v_embed,enc_ind_embed,dec_ind_embed,labels_seqind=overall_inp
         cur_bs_size = enc_w2v_embed.size()[0]
         overall_loss = None

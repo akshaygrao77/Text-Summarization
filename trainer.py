@@ -69,7 +69,7 @@ def compute_rogue_and_bluescore(overall_index_to_key,rogue_obj,src_seqind,tar_se
 
     return bscore
 
-def train_model(net, trainloader, validloader,optimizer, epochs, final_model_save_path,overall_index_to_key, wand_project_name=None,wordvec_obj_list=None,vectorizer_func=None,index_func=None,is_use_cuda=True):
+def train_model(net, trainloader, validloader,optimizer, epochs, final_model_save_path,overall_index_to_key,local_vocab_key_to_indx,overall_key_to_index, wand_project_name=None,wordvec_obj_list=None,vectorizer_func=None,index_func=None,is_use_cuda=True):
     print("total_params:{} net:{}".format(sum(p.numel() for p in net.parameters()),net))
     if not is_use_cuda:
         device_str = 'cpu'
@@ -121,9 +121,10 @@ def train_model(net, trainloader, validloader,optimizer, epochs, final_model_sav
         train_bleu_score = running_bleu_score/(batch_idx + 1)
         train_roug_scores = rogue_obj.compute()
 
+        print("train_loss:{} train_bleu_score:{} train_roug_scores:{} ".format(train_loss,train_bleu_score,train_roug_scores))
         test_bleu_score, test_roug_scores = evaluate_model(
-            net, validloader,wordvec_obj_list,vectorizer_func,index_func)
-        print("train_loss:{} train_bleu_score:{} valid_bleu_score:{} train_roug_scores:{} valid_roug_scores:{}".format(train_loss,train_bleu_score,test_bleu_score,train_roug_scores,test_roug_scores))
+            net, validloader,local_vocab_key_to_indx,overall_key_to_index,overall_index_to_key,wordvec_obj_list,vectorizer_func,index_func)
+        print(" valid_bleu_score:{} valid_roug_scores:{}".format(test_bleu_score,test_roug_scores))
         if(is_log_wandb):
             wandb.log({"train_loss":train_loss,"train_bleu_score": train_bleu_score, "valid_bleu_score": test_bleu_score,"train_roug_scores":train_roug_scores,"valid_roug_scores":test_roug_scores})
 
@@ -141,9 +142,8 @@ def train_model(net, trainloader, validloader,optimizer, epochs, final_model_sav
     print('Finished Training: Best saved model test best_rouge_f1score is:', best_rouge_f1score)
     return best_rouge_f1score, torch.load(final_model_save_path)
 
-def evaluate_model(net, dataloader,wordvec_obj_list=None,vectorizer_func=None,index_func=None):
+def evaluate_model(net, dataloader,local_vocab_key_to_indx,overall_key_to_index,overall_index_to_key,wordvec_obj_list=None,vectorizer_func=None,index_func=None):
     net.eval()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     bleu_score = 0
     rogue_obj = Rouge()
@@ -151,13 +151,18 @@ def evaluate_model(net, dataloader,wordvec_obj_list=None,vectorizer_func=None,in
     with torch.no_grad():
         loader = tqdm.tqdm(dataloader, desc='Testing')
         for batch_idx, data in enumerate(loader, 0):
+            begin_time = time.time()
             labels_seqind = data[-1]
 
-            data[-1],data[-2],data[1] = None,None,None
+            data = data[0],None,data[2],None,None
             # calculate outputs by running images through the network
-            outputs_seq_ind,_ = net(data,wordvec_obj_list,vectorizer_func,index_func)
+            outputs_seq_ind,_ = net(data,wordvec_obj_list,vectorizer_func,index_func,local_vocab_key_to_indx,overall_key_to_index,overall_index_to_key)
 
             bleu_score += compute_rogue_and_bluescore(overall_index_to_key,rogue_obj,outputs_seq_ind,labels_seqind)
+            cur_time = time.time()
+            step_time = cur_time - begin_time
+            loader.set_postfix(overall_dim=data[0].shape[1],
+                               blue_score=bleu_score/(batch_idx + 1), stime=format_time(step_time))
             
 
     return bleu_score/(batch_idx + 1),rogue_obj.compute()
@@ -165,7 +170,7 @@ def evaluate_model(net, dataloader,wordvec_obj_list=None,vectorizer_func=None,in
 
 if __name__ == '__main__':
     wand_project_name = "Text_Summarization"
-    # wand_project_name = None
+    wand_project_name = None
     w2v_name_list = ['glove-twitter-200','word2vec-google-news-300']
     vectorizer_func = sentence_vectorizer_using_wordembed
     index_func = convert_tokens_to_indices
@@ -227,14 +232,14 @@ if __name__ == '__main__':
             config=wandb_config,
         )
 
-    rscore,net = train_model(text_sum_model1, train_dataloader, valid_dataloader,optimizer, epochs, final_model_save_path,overall_index_to_key,wand_project_name,word2vec_obj_list,vectorizer_func,index_func,is_use_cuda)
+    rscore,net = train_model(text_sum_model1, train_dataloader, valid_dataloader,optimizer, epochs, final_model_save_path,overall_index_to_key,local_vocab_key_to_indx,overall_key_to_index,wand_project_name,word2vec_obj_list,vectorizer_func,index_func,is_use_cuda)
 
     test_ts_spacy_ds = TextSummarizationDataset(processed_valid_data,None,punctuations_to_remove,word2vec_obj_list,src_transform=vectorizer_func,
         target_transform=vectorizer_func,overall_key_to_index=overall_key_to_index)
     test_dataloader = torch.utils.data.DataLoader(
             test_ts_spacy_ds, shuffle=False, pin_memory=True, num_workers=4, batch_size=batch_size,collate_fn=custom_collate)
 
-    test_bleu_score, test_roug_scores = evaluate_model(text_sum_model1, test_dataloader,word2vec_obj_list,vectorizer_func,index_func)
+    test_bleu_score, test_roug_scores = evaluate_model(text_sum_model1, test_dataloader,local_vocab_key_to_indx,overall_key_to_index,overall_index_to_key,word2vec_obj_list,vectorizer_func,index_func)
     if(is_log_wandb):
         wandb.log({"best_valid_roug_scores": rscore,"test_bleu_score":test_bleu_score,"test_roug_scores":test_roug_scores})
         wandb.finish()
