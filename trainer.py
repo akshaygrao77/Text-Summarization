@@ -114,7 +114,7 @@ def train_model(net, trainloader, validloader,optimizer, epochs, final_model_sav
 
             cur_time = time.time()
             step_time = cur_time - begin_time
-            loader.set_postfix(train_loss=running_loss/(batch_idx + 1),cur_loss=loss.item(),overall_dim=data[0].shape[1]+data[1].shape[1],
+            loader.set_postfix(train_loss=running_loss/(batch_idx + 1),cur_loss=loss.item(),article_dim=data[0].shape[1],summary_dim=data[1].shape[1],
                                blue_score=running_bleu_score/(batch_idx + 1), stime=format_time(step_time))
 
         train_loss = running_loss/(batch_idx + 1)
@@ -170,12 +170,12 @@ def evaluate_model(net, dataloader,local_vocab_key_to_indx,overall_key_to_index,
 
 if __name__ == '__main__':
     wand_project_name = "Text_Summarization"
-    wand_project_name = None
+    # wand_project_name = None
     w2v_name_list = ['glove-twitter-200','word2vec-google-news-300']
     vectorizer_func = sentence_vectorizer_using_wordembed
     index_func = convert_tokens_to_indices
     
-    batch_size = 128
+    batch_size = 64
     epochs = 32
     is_use_cuda = True
     print(STRT)

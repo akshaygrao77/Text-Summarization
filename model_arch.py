@@ -68,7 +68,8 @@ class LSTM_CNN_Arch_With_Attention(nn.Module):
             if index_func is None:
                 index_func = convert_tokens_to_indices
             is_done = torch.zeros((cur_bs_size),device=self.device).long()
-            while(torch.sum(is_done)<cur_bs_size and len(output)<2000):
+            maxlen = 500
+            while(torch.sum(is_done)<cur_bs_size and len(output)<maxlen):
                 if(cur_output is None):
                     cur_output = [STRT] * cur_bs_size
                 else:
@@ -87,7 +88,15 @@ class LSTM_CNN_Arch_With_Attention(nn.Module):
                 # When in a particular sample, END token is seen mark that sample as done
                 is_done = torch.where(cur_output == overall_key_to_index[END],1,is_done)
                 output.append(cur_output)
-            output = torch.transpose(torch.stack(output),0,1)
+            
+            # This is needed bcoz when we use multiple GPUs to run, during gather different size of dimension 1 gives error during stacking
+            pad_seq = None
+            if(len(output) < maxlen):
+                pad_seq = torch.zeros((maxlen - len(output),cur_bs_size),dtype=output[0].dtype,device=output[0].device)
+            output = torch.stack(output)
+            if pad_seq is not None:
+                output = torch.cat((output,pad_seq),dim=0)
+            output = torch.transpose(output,0,1)
 
         return output,overall_loss       
 
