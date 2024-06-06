@@ -49,14 +49,15 @@ def add_UNK_STRT_END_to_W2V(word2vec_obj_list):
     random.seed(10)
     for word_vec_obj in word2vec_obj_list:
         word_vec_obj[UNK] = mean_wordvector(word_vec_obj,word_vec_obj.key_to_index.keys())
-        word_vec_obj.set_vecattr(UNK,"count",15000000)
         word_vec_obj[STRT] = get_extra_token_rep(word_vec_obj,10)
-        word_vec_obj.set_vecattr(STRT,"count",15000000)
         word_vec_obj[END] = get_extra_token_rep(word_vec_obj,10)
-        word_vec_obj.set_vecattr(END,"count",15000000)
         word_vec_obj[PAD] = np.zeros_like(word_vec_obj[END])
         # Having the highest frequency count for PAD is necessary in our design bcoz we assume that index 0 indicates PADDING and for that to happen it has to be of highest frequency
         word_vec_obj.set_vecattr(PAD,"count",15000011)
+        word_vec_obj.set_vecattr(STRT,"count",15000009)
+        word_vec_obj.set_vecattr(END,"count",15000007)
+        word_vec_obj.set_vecattr(UNK,"count",15000005)
+        
 
 def get_combined_frequency(wordvec_obj_list,key,freq_local_vocab=None):
     if freq_local_vocab is None:

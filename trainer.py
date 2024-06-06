@@ -126,7 +126,7 @@ def train_model(net, trainloader, validloader,optimizer, epochs, final_model_sav
             net, validloader,local_vocab_key_to_indx,overall_key_to_index,overall_index_to_key,wordvec_obj_list,vectorizer_func,index_func)
         print(" valid_bleu_score:{} valid_roug_scores:{}".format(test_bleu_score,test_roug_scores))
         if(is_log_wandb):
-            wandb.log({"train_loss":train_loss,"train_bleu_score": train_bleu_score, "valid_bleu_score": test_bleu_score,"train_roug_scores":train_roug_scores,"valid_roug_scores":test_roug_scores})
+            wandb.log({"cur_epoch":epoch+1,"train_loss":train_loss,"train_bleu_score": train_bleu_score, "valid_bleu_score": test_bleu_score,"train_roug_scores":train_roug_scores,"valid_roug_scores":test_roug_scores})
 
         per_epoch_model_save_path = final_model_save_path.replace(
             "_dir.pt", "")
@@ -175,7 +175,7 @@ if __name__ == '__main__':
     vectorizer_func = sentence_vectorizer_using_wordembed
     index_func = convert_tokens_to_indices
     
-    batch_size = 64
+    batch_size = 32
     epochs = 32
     is_use_cuda = True
     print(STRT)
@@ -210,7 +210,7 @@ if __name__ == '__main__':
     
     text_sum_model1 = LSTM_CNN_Arch_With_Attention(model_config)
     optimizer = optim.Adam(text_sum_model1.parameters(), lr=0.001)
-    final_model_save_path = "/saved_model/LSTM_CNN_Arch/seq2seq_with_attention.pt"
+    final_model_save_path = "./saved_model/LSTM_CNN_Arch/seq2seq_with_attention.pt"
 
     is_log_wandb = not(wand_project_name is None)
     if(is_log_wandb):

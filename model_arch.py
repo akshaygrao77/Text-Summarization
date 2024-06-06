@@ -41,22 +41,32 @@ class LSTM_CNN_Arch_With_Attention(nn.Module):
             attn_out,_ = self.attention_layer(query=dec_out, key=enc_out, value=enc_out, need_weights=False)
             attn_out = torch.cat((attn_out,dec_out),dim=2)
             # print("attn_out :{}".format(attn_out.size()))
-            output = []
-            for ind in range(attn_out.size()[0]):
-                output.append(self.adapt_smax_layer.predict(attn_out[ind]))
-            output = torch.stack(output)
-        
-            # If labels are given return loss as well
+            unflatten = torch.nn.Unflatten(0,(attn_out.size()[0],attn_out.size()[1]))
+            attn_out = torch.flatten(attn_out,0,1)
+            output = self.adapt_smax_layer.predict(attn_out)
+            output = unflatten(output)
+            for ind in range(output.size()[0]):
+                first_end_index = (output[ind] == 2).nonzero(as_tuple=True)[0]
+                if(len(first_end_index)>0):
+                    first_end_index = first_end_index[0].item()
+                    output[ind][first_end_index+1:] = 0
+            # output = []
+            # for ind in range(attn_out.size()[0]):
+            #     cur_out = self.adapt_smax_layer.predict(attn_out[ind])
+            #     # first_end_index = (cur_out == 2).nonzero(as_tuple=True)[0]
+            #     # # If END tag exists inside the current batch's output
+            #     # if(len(first_end_index)>0):
+            #     #     first_end_index = first_end_index[0].item()
+            #     #     cur_out[first_end_index+1:] = 0
+            #     output.append(cur_out)
+            # output = torch.stack(output)
             if labels_seqind is not None:
-                labels_seqind = labels_seqind.to(device=self.device, non_blocking=True)
                 overall_loss = 0
-                # Need to run adaptivesoftmax for each batch separately
-                for ind in range(attn_out.size()[0]):
-                    out,_ = self.adapt_smax_layer(attn_out[ind],labels_seqind[ind])
-                    # Removing padding entries from tensor before loss calculation
-                    out = out[labels_seqind[ind] != 0]
-                    overall_loss += torch.mean(-out)
-                overall_loss = overall_loss / attn_out.size()[0]
+                flattened_labels_seqind = torch.flatten(labels_seqind,0,1)
+                out,_ = self.adapt_smax_layer(attn_out,flattened_labels_seqind)
+                # Removing padding entries from tensor before loss calculation
+                out = out[flattened_labels_seqind != 0]
+                overall_loss = torch.mean(-out)
         else:
             # Run this in inference mode. Here we will decode one word at a time. So always output size per timestep is N
             cur_output,dec_h_out,dec_c_out = None,None,None
@@ -68,7 +78,7 @@ class LSTM_CNN_Arch_With_Attention(nn.Module):
             if index_func is None:
                 index_func = convert_tokens_to_indices
             is_done = torch.zeros((cur_bs_size),device=self.device).long()
-            maxlen = 500
+            maxlen = 300
             while(torch.sum(is_done)<cur_bs_size and len(output)<maxlen):
                 if(cur_output is None):
                     cur_output = [STRT] * cur_bs_size
