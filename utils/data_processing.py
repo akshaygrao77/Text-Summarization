@@ -22,6 +22,11 @@ END = "<END>"
 UNK = "<UNK>"
 PAD = ""
 
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_id + worker_seed)
+    random.seed(worker_id - worker_seed)
+
 def get_stopwords():
     nlp = spacy.load("en_core_web_sm")
     stop_words = nlp.Defaults.stop_words
@@ -58,11 +63,9 @@ def add_UNK_STRT_END_to_W2V(word2vec_obj_list):
         word_vec_obj.set_vecattr(END,"count",15000007)
         word_vec_obj.set_vecattr(UNK,"count",15000005)
         
-
 def get_combined_frequency(wordvec_obj_list,key,freq_local_vocab=None):
-    if freq_local_vocab is None:
-        overall_freq = 0
-    else:
+    overall_freq = 0
+    if freq_local_vocab is not None and key not in [STRT,PAD,UNK,END]:
         overall_freq = freq_local_vocab.get(key,0)
     for word_vec_obj in wordvec_obj_list:
         if key in word_vec_obj:
@@ -73,15 +76,30 @@ def get_combined_frequency(wordvec_obj_list,key,freq_local_vocab=None):
     
     return overall_freq
 
-def form_overall_key_to_index(wordvec_obj_list,freq_local_vocab=None,local_vocab_key_to_indx=None):
+def form_overall_key_to_index(wordvec_obj_list,freq_local_vocab=None,local_vocab_key_to_indx=None,percentile_to_omit_in_w2v=0):
     overall_keys = set()
     for word_vec_obj in wordvec_obj_list:
         overall_keys.update(list(word_vec_obj.key_to_index.keys()))
+    if percentile_to_omit_in_w2v > 0:
+        # If percentile to omit is mentioned, remove the bottom x percentile frequency words from global vocab only.
+        tmparr = []
+        for k in overall_keys:
+            tmparr.append(get_combined_frequency(wordvec_obj_list,k,freq_local_vocab))
+        qval = np.percentile(np.array(tmparr), percentile_to_omit_in_w2v)
+        print("qval",qval)
+        subtract_set = set()
+        for k in overall_keys:
+            cval = get_combined_frequency(wordvec_obj_list,k,freq_local_vocab)
+            if(cval<qval):
+                subtract_set.add(k)
+        overall_keys = overall_keys - subtract_set
+        print("len(subtract_set) ",len(subtract_set))
     overall_keys.update(local_vocab_key_to_indx.keys())
-    
     # Order such that highest frequency keys are in the beginning. This is required for doing adaptivelogsoftmax
     ret = sorted(overall_keys,reverse=True, key=lambda item: get_combined_frequency(wordvec_obj_list,item,freq_local_vocab))
+    print("ret ",len(ret))
     ret_dict = {ret[i]:i for i in range(len(ret))}
+    print("ret_dict ",len(ret_dict))
     return ret_dict,ret
 
 def generate_w2vobjs(list_of_w2v_names):

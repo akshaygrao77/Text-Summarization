@@ -40,33 +40,33 @@ class LSTM_CNN_Arch_With_Attention(nn.Module):
             # print("dec_out",dec_out.size())
             attn_out,_ = self.attention_layer(query=dec_out, key=enc_out, value=enc_out, need_weights=False)
             attn_out = torch.cat((attn_out,dec_out),dim=2)
-            # print("attn_out :{}".format(attn_out.size()))
-            unflatten = torch.nn.Unflatten(0,(attn_out.size()[0],attn_out.size()[1]))
-            attn_out = torch.flatten(attn_out,0,1)
-            output = self.adapt_smax_layer.predict(attn_out)
-            output = unflatten(output)
-            for ind in range(output.size()[0]):
-                first_end_index = (output[ind] == 2).nonzero(as_tuple=True)[0]
-                if(len(first_end_index)>0):
-                    first_end_index = first_end_index[0].item()
-                    output[ind][first_end_index+1:] = 0
-            # output = []
-            # for ind in range(attn_out.size()[0]):
-            #     cur_out = self.adapt_smax_layer.predict(attn_out[ind])
-            #     # first_end_index = (cur_out == 2).nonzero(as_tuple=True)[0]
-            #     # # If END tag exists inside the current batch's output
-            #     # if(len(first_end_index)>0):
-            #     #     first_end_index = first_end_index[0].item()
-            #     #     cur_out[first_end_index+1:] = 0
-            #     output.append(cur_out)
-            # output = torch.stack(output)
+            # !!!! It is important to have timestep first dimension in the tensor bcoz the inner loop has N,B hence the memory requirements stay same and predictable as compared to having timestep in the second dimension which results in heavy memory footprint changes
+            attn_out = torch.transpose(attn_out,0,1)
             if labels_seqind is not None:
-                overall_loss = 0
-                flattened_labels_seqind = torch.flatten(labels_seqind,0,1)
-                out,_ = self.adapt_smax_layer(attn_out,flattened_labels_seqind)
-                # Removing padding entries from tensor before loss calculation
-                out = out[flattened_labels_seqind != 0]
-                overall_loss = torch.mean(-out)
+                labels_seqind = torch.transpose(labels_seqind,0,1)
+            output = []
+            overall_loss = 0
+            cnt = 0
+            end_tag_mask = torch.ones(attn_out.size()[1],device=attn_out.device)
+            for ind in range(attn_out.size()[0]):
+                cur_out = self.adapt_smax_layer.predict(attn_out[ind])
+                cur_mask = torch.where(cur_out == 2,0,1)
+                cur_out = cur_out * end_tag_mask
+                end_tag_mask = end_tag_mask * cur_mask
+                output.append(cur_out)
+                if labels_seqind is not None:
+                    out,_ = self.adapt_smax_layer(attn_out[ind],labels_seqind[ind])
+                    # Removing padding entries from tensor before loss calculation
+                    out = out[labels_seqind[ind] != 0]
+                    if(out.size()[0]>0):
+                        cnt += 1
+                        overall_loss += torch.mean(-out)
+            overall_loss = (overall_loss / cnt)
+            output = torch.stack(output)
+            output = torch.transpose(output,0,1).long()
+            if labels_seqind is not None:
+                labels_seqind = torch.transpose(labels_seqind,0,1)
+            # print("output:{} labels_seqind:{} overall_loss:{}".format(output.size(),labels_seqind.size(),overall_loss))
         else:
             # Run this in inference mode. Here we will decode one word at a time. So always output size per timestep is N
             cur_output,dec_h_out,dec_c_out = None,None,None
@@ -78,7 +78,7 @@ class LSTM_CNN_Arch_With_Attention(nn.Module):
             if index_func is None:
                 index_func = convert_tokens_to_indices
             is_done = torch.zeros((cur_bs_size),device=self.device).long()
-            maxlen = 300
+            maxlen = 500
             while(torch.sum(is_done)<cur_bs_size and len(output)<maxlen):
                 if(cur_output is None):
                     cur_output = [STRT] * cur_bs_size
@@ -99,7 +99,7 @@ class LSTM_CNN_Arch_With_Attention(nn.Module):
                 is_done = torch.where(cur_output == overall_key_to_index[END],1,is_done)
                 output.append(cur_output)
             
-            # This is needed bcoz when we use multiple GPUs to run, during gather different size of dimension 1 gives error during stacking
+            # Important!! This is needed bcoz when we use multiple GPUs to run, during gather different size of dimension 1 gives error during stacking
             pad_seq = None
             if(len(output) < maxlen):
                 pad_seq = torch.zeros((maxlen - len(output),cur_bs_size),dtype=output[0].dtype,device=output[0].device)
