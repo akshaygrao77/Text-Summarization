@@ -8,6 +8,7 @@ from ignite.metrics import Rouge
 import torcheval
 from torcheval.metrics.functional.text import bleu
 import tqdm
+from collections import OrderedDict
 
 from model_arch import LSTM_CNN_Arch_With_Attention
 from utils.data_processing import *
@@ -49,7 +50,11 @@ def convert_seq_indx_to_word(seq_inds,overall_index_to_key):
     for each_seq_ind in seq_inds:
         tmp = []
         for eind in each_seq_ind:
-            tmp.append(overall_index_to_key[eind])
+            # If in a sequence u see the <END> tag, truncate the future items
+            if(eind == 2):
+                break
+            else:
+                tmp.append(overall_index_to_key[eind])
         ret_seq_arr.append(tmp)
     
     return ret_seq_arr
@@ -70,6 +75,7 @@ def compute_rogue_and_bluescore(overall_index_to_key,rogue_obj,src_seqind,tar_se
     return bscore
 
 def train_model(net, trainloader, validloader,optimizer, epochs, final_model_save_path,overall_index_to_key,local_vocab_key_to_indx,overall_key_to_index, wand_project_name=None,wordvec_obj_list=None,vectorizer_func=None,index_func=None,is_use_cuda=True):
+    net.train()
     print("total_params:{} net:{}".format(sum(p.numel() for p in net.parameters()),net))
     if not is_use_cuda:
         device_str = 'cpu'
@@ -129,11 +135,11 @@ def train_model(net, trainloader, validloader,optimizer, epochs, final_model_sav
             wandb.log({"cur_epoch":epoch+1,"train_loss":train_loss,"train_bleu_score": train_bleu_score, "valid_bleu_score": test_bleu_score,"train_roug_scores":train_roug_scores,"valid_roug_scores":test_roug_scores})
 
         per_epoch_model_save_path = final_model_save_path.replace(
-            "_dir.pt", "")
+            ".pt", "")
         if not os.path.exists(per_epoch_model_save_path):
             os.makedirs(per_epoch_model_save_path)
         per_epoch_model_save_path += "/epoch_{}_dir.pt".format(epoch)
-        if(epoch % 2 == 0):
+        if(epoch % 1 == 0):
             torch.save(net, per_epoch_model_save_path)
         if(test_roug_scores["Rouge-L-F"] >= best_rouge_f1score):
             best_rouge_f1score = test_roug_scores["Rouge-L-F"]
@@ -167,6 +173,28 @@ def evaluate_model(net, dataloader,local_vocab_key_to_indx,overall_key_to_index,
 
     return bleu_score/(batch_idx + 1),rogue_obj.compute()
 
+def get_model_from_path(custom_model, model_path):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    temp_model = torch.load(model_path, map_location=device)
+    if(isinstance(temp_model, torch.nn.DataParallel)):
+        new_state_dict = OrderedDict()
+        for k, v in temp_model.state_dict().items():
+            name = k[7:]  # remove 'module.' of dataparallel
+            new_state_dict[name] = v
+        custom_model.load_state_dict(new_state_dict)
+    elif(isinstance(temp_model, dict)):
+        if("module." in [*temp_model['state_dict'].keys()][0]):
+            new_state_dict = OrderedDict()
+            for k, v in temp_model['state_dict'].items():
+                name = k[7:]  # remove 'module.' of dataparallel
+                new_state_dict[name] = v
+            custom_model.load_state_dict(new_state_dict)
+        else:
+            custom_model.load_state_dict(temp_model['state_dict'])
+    else:
+        custom_model.load_state_dict(temp_model.state_dict())
+
+    return custom_model
 
 if __name__ == '__main__':
     wand_project_name = "Text_Summarization"
@@ -174,8 +202,11 @@ if __name__ == '__main__':
     w2v_name_list = ['glove-twitter-200','word2vec-google-news-300']
     vectorizer_func = sentence_vectorizer_using_wordembed
     index_func = convert_tokens_to_indices
+
+    start_net_path = None
+    # start_net_path = "saved_model/LSTM_CNN_Arch/seq2seq_with_attention/epoch_0_dir.pt"
     
-    batch_size = 32
+    batch_size = 4
     epochs = 32
     is_use_cuda = True
     print(STRT)
@@ -192,13 +223,16 @@ if __name__ == '__main__':
     assert all([local_vocab_key_to_indx[local_vocab_indx_to_key[i]]==i for i in range(local_vocab_size)])
     word2vec_obj_list = generate_w2vobjs(w2v_name_list)
     w2v_vec_size = sum([len(obj[STRT]) for obj in word2vec_obj_list])
-    overall_key_to_index,overall_index_to_key = form_overall_key_to_index(word2vec_obj_list,freq_local_vocab,local_vocab_key_to_indx)
+    overall_key_to_index,overall_index_to_key = form_overall_key_to_index(word2vec_obj_list,freq_local_vocab,local_vocab_key_to_indx,percentile_to_omit_in_w2v=15)
     vocab_size = len(overall_key_to_index)
+    print("overall_index_to_key ",overall_index_to_key)
 
     train_ts_spacy_ds = TextSummarizationDataset(processed_train_data,None,punctuations_to_remove,word2vec_obj_list,src_transform=vectorizer_func,
         target_transform=vectorizer_func,overall_key_to_index=overall_key_to_index,local_key_to_index = local_vocab_key_to_indx)
+    train_seed_gen = torch.Generator()
+    train_seed_gen.manual_seed(2022)
     train_dataloader = torch.utils.data.DataLoader(
-            train_ts_spacy_ds, shuffle=True, pin_memory=False, num_workers=4, batch_size=batch_size,collate_fn=custom_collate)
+            train_ts_spacy_ds, shuffle=True, pin_memory=True, num_workers=4, batch_size=batch_size,collate_fn=custom_collate,generator=train_seed_gen, worker_init_fn=seed_worker)
     
     valid_ts_spacy_ds = TextSummarizationDataset(processed_valid_data,None,punctuations_to_remove,word2vec_obj_list,src_transform=vectorizer_func,
         target_transform=vectorizer_func,overall_key_to_index=overall_key_to_index,local_key_to_index = local_vocab_key_to_indx)
@@ -208,7 +242,12 @@ if __name__ == '__main__':
     print("local_vocab_size:{} vocab_size:{}".format(local_vocab_size,vocab_size))
     model_config = {"num_enc_lstm_layers":3,"embed_size":w2v_vec_size,"enc_input_size":250,"enc_hidden_size":256,"local_vocab_size":local_vocab_size,"vocab_size":vocab_size,"num_dec_lstm_layers":4,"dec_hidden_size":220,"is_use_cuda":is_use_cuda}
     
-    text_sum_model1 = LSTM_CNN_Arch_With_Attention(model_config)
+    if(start_net_path is not None):
+        text_sum_model1 = LSTM_CNN_Arch_With_Attention(model_config)
+        text_sum_model1 = get_model_from_path(text_sum_model1,start_net_path)
+    else:
+        text_sum_model1 = LSTM_CNN_Arch_With_Attention(model_config)
+
     optimizer = optim.Adam(text_sum_model1.parameters(), lr=0.001)
     final_model_save_path = "./saved_model/LSTM_CNN_Arch/seq2seq_with_attention.pt"
 
@@ -224,6 +263,7 @@ if __name__ == '__main__':
         wandb_config["w2v_name_list"] = str(w2v_name_list)
         wandb_config["vectorizer_func"] = vectorizer_func
         wandb_config["index_func"] = index_func
+        wandb_config["start_net_path"] = start_net_path
         wandb_config["data_source"]="./processed_dataset/spacy_lemmatizer/train_data.csv"
         wandb_config.update(model_config)
 
