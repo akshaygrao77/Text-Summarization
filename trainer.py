@@ -55,6 +55,9 @@ def convert_seq_indx_to_word(seq_inds,overall_index_to_key):
                 break
             else:
                 tmp.append(overall_index_to_key[eind])
+        if(len(tmp)<5):
+            while(len(tmp)<5):
+                tmp.append('_')
         ret_seq_arr.append(tmp)
     
     return ret_seq_arr
@@ -206,7 +209,7 @@ if __name__ == '__main__':
     start_net_path = None
     # start_net_path = "saved_model/LSTM_CNN_Arch/seq2seq_with_attention/epoch_0_dir.pt"
     
-    batch_size = 4
+    batch_size = 64
     epochs = 32
     is_use_cuda = True
     print(STRT)
@@ -225,14 +228,14 @@ if __name__ == '__main__':
     w2v_vec_size = sum([len(obj[STRT]) for obj in word2vec_obj_list])
     overall_key_to_index,overall_index_to_key = form_overall_key_to_index(word2vec_obj_list,freq_local_vocab,local_vocab_key_to_indx,percentile_to_omit_in_w2v=15)
     vocab_size = len(overall_key_to_index)
-    print("overall_index_to_key ",overall_index_to_key)
+    print("overall_index_to_key ",overall_index_to_key[:100])
 
     train_ts_spacy_ds = TextSummarizationDataset(processed_train_data,None,punctuations_to_remove,word2vec_obj_list,src_transform=vectorizer_func,
         target_transform=vectorizer_func,overall_key_to_index=overall_key_to_index,local_key_to_index = local_vocab_key_to_indx)
     train_seed_gen = torch.Generator()
     train_seed_gen.manual_seed(2022)
     train_dataloader = torch.utils.data.DataLoader(
-            train_ts_spacy_ds, shuffle=True, pin_memory=True, num_workers=4, batch_size=batch_size,collate_fn=custom_collate,generator=train_seed_gen, worker_init_fn=seed_worker)
+            train_ts_spacy_ds, shuffle=True, pin_memory=True, num_workers=16, batch_size=batch_size,collate_fn=custom_collate,generator=train_seed_gen, worker_init_fn=seed_worker)
     
     valid_ts_spacy_ds = TextSummarizationDataset(processed_valid_data,None,punctuations_to_remove,word2vec_obj_list,src_transform=vectorizer_func,
         target_transform=vectorizer_func,overall_key_to_index=overall_key_to_index,local_key_to_index = local_vocab_key_to_indx)
