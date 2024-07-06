@@ -251,6 +251,28 @@ def custom_collate(original_batch):
 
     return ret_src_vec,ret_tar_vec,ret_src_seq,ret_tar_seq,ret_lab_seq
 
+def convert_seq_indx_to_word(seq_inds,overall_index_to_key):
+    ret_seq_arr = []
+    for each_seq_ind in seq_inds:
+        tmp = []
+        for eind in each_seq_ind:
+            # If in a sequence u see the <END> tag, truncate the future items
+            if(eind == 2):
+                break
+            else:
+                tmp.append(overall_index_to_key[eind])
+        if(len(tmp)<5):
+            while(len(tmp)<5):
+                tmp.append('_')
+        ret_seq_arr.append(tmp)
+    
+    return ret_seq_arr
+
+def convert_seq_arr_to_seq_str(seq_arr):
+    ret_strs = []
+    for each_sq in seq_arr:
+        ret_strs.append(' '.join(each_sq))
+    return ret_strs
 
 class TextSummarizationDataset(Dataset):
     def __init__(self, pandas_frame,tokenizer_func,punctuations_to_remove,word_vector_obj_list=[],is_remove_stopwords=False,src_transform=None,target_transform=None,overall_key_to_index=None,local_key_to_index=None,src_sent_key="article",target_sent_key="highlights"):

@@ -13,6 +13,7 @@ import gensim.downloader as api
 from pandarallel import pandarallel
 
 def spacy_lemmatizer(sentence,is_remove_stopword=False,punctuations_to_remove="",verbose=False):
+    nlp = spacy.load("en_core_web_sm")
     # Creating our token object, which is used to create documents with linguistic annotations.
     doc = nlp(sentence)
 

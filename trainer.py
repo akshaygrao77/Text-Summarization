@@ -45,29 +45,6 @@ def format_time(seconds):
         f = '0ms'
     return f
 
-def convert_seq_indx_to_word(seq_inds,overall_index_to_key):
-    ret_seq_arr = []
-    for each_seq_ind in seq_inds:
-        tmp = []
-        for eind in each_seq_ind:
-            # If in a sequence u see the <END> tag, truncate the future items
-            if(eind == 2):
-                break
-            else:
-                tmp.append(overall_index_to_key[eind])
-        if(len(tmp)<5):
-            while(len(tmp)<5):
-                tmp.append('_')
-        ret_seq_arr.append(tmp)
-    
-    return ret_seq_arr
-
-def convert_seq_arr_to_seq_str(seq_arr):
-    ret_strs = []
-    for each_sq in seq_arr:
-        ret_strs.append(' '.join(each_sq))
-    return ret_strs
-
 def compute_rogue_and_bluescore(overall_index_to_key,rogue_obj,src_seqind,tar_seqind):
     src_seq_arr = convert_seq_indx_to_word(src_seqind,overall_index_to_key)
     tar_seq_arr = convert_seq_indx_to_word(tar_seqind,overall_index_to_key)
@@ -78,7 +55,6 @@ def compute_rogue_and_bluescore(overall_index_to_key,rogue_obj,src_seqind,tar_se
     return bscore
 
 def train_model(net, trainloader, validloader,optimizer, epochs, final_model_save_path,overall_index_to_key,local_vocab_key_to_indx,overall_key_to_index, wand_project_name=None,wordvec_obj_list=None,vectorizer_func=None,index_func=None,is_use_cuda=True):
-    net.train()
     print("total_params:{} net:{}".format(sum(p.numel() for p in net.parameters()),net))
     if not is_use_cuda:
         device_str = 'cpu'
@@ -95,8 +71,9 @@ def train_model(net, trainloader, validloader,optimizer, epochs, final_model_sav
     is_log_wandb = not(wand_project_name is None)
     best_rouge_f1score = 0
     net.train()
-    for epoch in range(epochs):  # loop over the dataset multiple times
+    for epoch in range(22,epochs):  # loop over the dataset multiple times
         rogue_obj.reset()
+        net.train()
 
         running_loss = 0.0
         running_bleu_score = 0.0
@@ -109,8 +86,6 @@ def train_model(net, trainloader, validloader,optimizer, epochs, final_model_sav
 
             # zero the parameter gradients
             optimizer.zero_grad()
-            # print("{:.3f}MB allocated".format(torch.cuda.memory_allocated()/1024**2))
-            # print("src:{} tar:{} overall_dim:{}".format(data[0].size(),data[1].size(),data[0].shape[1]+data[1].shape[1]))
             # pass entire batch of all sequence to model.
             outputs_seq_ind,loss = net(data)
             # print(loss)
@@ -207,7 +182,7 @@ if __name__ == '__main__':
     index_func = convert_tokens_to_indices
 
     start_net_path = None
-    # start_net_path = "saved_model/LSTM_CNN_Arch/seq2seq_with_attention/epoch_0_dir.pt"
+    start_net_path = "saved_model/LSTM_CNN_Arch/seq2seq_with_attention.pt"
     
     batch_size = 64
     epochs = 32
@@ -216,15 +191,29 @@ if __name__ == '__main__':
     stop_words = get_stopwords()
     punctuations_to_remove = "\"#$%&'()*+-/<=>[\]^_`{|}~"
 
-    processed_train_data = pd.read_pickle('./processed_dataset/spacy_lemmatizer/train_data.pkl')
+    tokenized_training_dataset_path = './processed_dataset/spacy_lemmatizer/train_data.pkl'
+    processed_train_data = pd.read_pickle(tokenized_training_dataset_path)
     processed_valid_data = pd.read_pickle('./processed_dataset/spacy_lemmatizer/validation.pkl')
     processed_test_data = pd.read_pickle('./processed_dataset/spacy_lemmatizer/test.pkl')
 
-    local_vocab_key_to_indx,local_vocab_indx_to_key,freq_local_vocab = generate_local_vocab_word_dict(processed_train_data)
+    vocab_path = get_vocab_dict_path(w2v_name_list,tokenized_training_dataset_path)
+    if not os.path.exists(vocab_path):
+        vocab_dict = get_vocab_dict(w2v_name_list,tokenized_training_dataset_path)
+        with open(vocab_path, 'wb') as handle:
+            pickle.dump(vocab_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    else:
+        with open(vocab_path, 'rb') as handle:
+            vocab_dict = pickle.load(handle)
+            if vocab_dict["local_vocab_generated_path"] != tokenized_training_dataset_path or vocab_dict["w2v_name_list"] != w2v_name_list:
+                vocab_dict = get_vocab_dict(w2v_name_list,tokenized_training_dataset_path)
+                with open(vocab_path, 'wb') as handle:
+                    pickle.dump(vocab_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    local_vocab_key_to_indx,local_vocab_indx_to_key,freq_local_vocab = vocab_dict["local_vocab_key_to_indx"],vocab_dict["local_vocab_indx_to_key"],vocab_dict["freq_local_vocab"]
     local_vocab_size = len(local_vocab_key_to_indx)
     assert local_vocab_size==len(local_vocab_indx_to_key), "local_vocab_size:{} len(local_vocab_indx_to_key):{}".format(local_vocab_size,len(local_vocab_indx_to_key))
     assert all([local_vocab_key_to_indx[local_vocab_indx_to_key[i]]==i for i in range(local_vocab_size)])
-    word2vec_obj_list = generate_w2vobjs(w2v_name_list)
+    word2vec_obj_list = vocab_dict["word2vec_obj_list"]
     w2v_vec_size = sum([len(obj[STRT]) for obj in word2vec_obj_list])
     overall_key_to_index,overall_index_to_key = form_overall_key_to_index(word2vec_obj_list,freq_local_vocab,local_vocab_key_to_indx,percentile_to_omit_in_w2v=15)
     vocab_size = len(overall_key_to_index)
