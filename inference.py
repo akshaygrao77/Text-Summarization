@@ -84,6 +84,9 @@ if __name__ == '__main__':
     print(local_vocab_key_to_indx[STRT],local_vocab_key_to_indx[UNK],local_vocab_key_to_indx[END],local_vocab_key_to_indx[PAD])
     print(overall_key_to_index[STRT],overall_key_to_index[UNK],overall_key_to_index[END],overall_key_to_index[PAD])
     
+    print("##uru",get_combined_frequency(word2vec_obj_list,"##uru",freq_local_vocab=freq_local_vocab))
+    print("Ġworld",get_combined_frequency(word2vec_obj_list,"Ġworld",freq_local_vocab=freq_local_vocab))
+
     model_path = "saved_model/LSTM_CNN_Arch/seq2seq_with_attention.pt"
     model_config = {"num_enc_lstm_layers":3,"embed_size":w2v_vec_size,"enc_input_size":250,"enc_hidden_size":256,"local_vocab_size":local_vocab_size,"vocab_size":vocab_size,"num_dec_lstm_layers":4,"dec_hidden_size":220,"is_use_cuda":is_use_cuda}    
 
