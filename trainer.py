@@ -10,8 +10,9 @@ from torcheval.metrics.functional.text import bleu
 import tqdm
 from collections import OrderedDict
 
-from model_arch import LSTM_CNN_Arch_With_Attention
+from model_arch import LSTM_CNN_Arch_With_Attention,LSTM_CNN_Arch_With_Attention_multiple_span
 from utils.data_processing import *
+from vocab_dict_generator import *
 
 def format_time(seconds):
     days = int(seconds / 3600/24)
@@ -71,7 +72,7 @@ def train_model(net, trainloader, validloader,optimizer, epochs, final_model_sav
     is_log_wandb = not(wand_project_name is None)
     best_rouge_f1score = 0
     net.train()
-    for epoch in range(22,epochs):  # loop over the dataset multiple times
+    for epoch in range(epochs):  # loop over the dataset multiple times
         rogue_obj.reset()
         net.train()
 
@@ -100,6 +101,8 @@ def train_model(net, trainloader, validloader,optimizer, epochs, final_model_sav
             step_time = cur_time - begin_time
             loader.set_postfix(train_loss=running_loss/(batch_idx + 1),cur_loss=loss.item(),article_dim=data[0].shape[1],summary_dim=data[1].shape[1],
                                blue_score=running_bleu_score/(batch_idx + 1), stime=format_time(step_time))
+            # if(batch_idx>3):
+            #     break
 
         train_loss = running_loss/(batch_idx + 1)
         train_bleu_score = running_bleu_score/(batch_idx + 1)
@@ -147,6 +150,8 @@ def evaluate_model(net, dataloader,local_vocab_key_to_indx,overall_key_to_index,
             step_time = cur_time - begin_time
             loader.set_postfix(overall_dim=data[0].shape[1],
                                blue_score=bleu_score/(batch_idx + 1), stime=format_time(step_time))
+            # if(batch_idx>1):
+            #     break
             
 
     return bleu_score/(batch_idx + 1),rogue_obj.compute()
@@ -182,10 +187,10 @@ if __name__ == '__main__':
     index_func = convert_tokens_to_indices
 
     start_net_path = None
-    start_net_path = "saved_model/LSTM_CNN_Arch/seq2seq_with_attention.pt"
+    # start_net_path = "saved_model/LSTM_CNN_Arch/seq2seq_with_attention.pt"
     
     batch_size = 64
-    epochs = 32
+    epochs = 50
     is_use_cuda = True
     print(STRT)
     stop_words = get_stopwords()
@@ -232,16 +237,20 @@ if __name__ == '__main__':
             valid_ts_spacy_ds, shuffle=False, pin_memory=False, num_workers=4, batch_size=batch_size,collate_fn=custom_collate)
     
     print("local_vocab_size:{} vocab_size:{}".format(local_vocab_size,vocab_size))
-    model_config = {"num_enc_lstm_layers":3,"embed_size":w2v_vec_size,"enc_input_size":250,"enc_hidden_size":256,"local_vocab_size":local_vocab_size,"vocab_size":vocab_size,"num_dec_lstm_layers":4,"dec_hidden_size":220,"is_use_cuda":is_use_cuda}
+    model_config = {"no_of_encs":4,"num_enc_lstm_layers":3,"embed_size":w2v_vec_size,"enc_input_size":250,"enc_hidden_size":256,"local_vocab_size":local_vocab_size,"vocab_size":vocab_size,"num_dec_lstm_layers":4,"dec_hidden_size":220,"is_use_cuda":is_use_cuda}
     
+    if(model_config["enc_hidden_size"] % model_config["no_of_encs"] != 0):
+        raise Exception("Invalid no_of_encs:{} or enc_hidden_size:{}".format(no_of_encs,enc_hidden_size))
     if(start_net_path is not None):
-        text_sum_model1 = LSTM_CNN_Arch_With_Attention(model_config)
+        text_sum_model1 = LSTM_CNN_Arch_With_Attention_multiple_span(model_config)
+        # text_sum_model1 = LSTM_CNN_Arch_With_Attention(model_config)
         text_sum_model1 = get_model_from_path(text_sum_model1,start_net_path)
     else:
-        text_sum_model1 = LSTM_CNN_Arch_With_Attention(model_config)
+        text_sum_model1 = LSTM_CNN_Arch_With_Attention_multiple_span(model_config)
+        # text_sum_model1 = LSTM_CNN_Arch_With_Attention(model_config)
 
     optimizer = optim.Adam(text_sum_model1.parameters(), lr=0.001)
-    final_model_save_path = "./saved_model/LSTM_CNN_Arch/seq2seq_with_attention.pt"
+    final_model_save_path = "./saved_model/LSTM_CNN_Arch_multiple_span/seq2seq_with_attention.pt"
 
     is_log_wandb = not(wand_project_name is None)
     if(is_log_wandb):
@@ -267,7 +276,7 @@ if __name__ == '__main__':
     rscore,net = train_model(text_sum_model1, train_dataloader, valid_dataloader,optimizer, epochs, final_model_save_path,overall_index_to_key,local_vocab_key_to_indx,overall_key_to_index,wand_project_name,word2vec_obj_list,vectorizer_func,index_func,is_use_cuda)
 
     test_ts_spacy_ds = TextSummarizationDataset(processed_valid_data,None,punctuations_to_remove,word2vec_obj_list,src_transform=vectorizer_func,
-        target_transform=vectorizer_func,overall_key_to_index=overall_key_to_index)
+        target_transform=vectorizer_func,overall_key_to_index=overall_key_to_index,local_key_to_index = local_vocab_key_to_indx)
     test_dataloader = torch.utils.data.DataLoader(
             test_ts_spacy_ds, shuffle=False, pin_memory=True, num_workers=4, batch_size=batch_size,collate_fn=custom_collate)
 
