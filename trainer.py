@@ -67,11 +67,14 @@ def train_model(net, trainloader, validloader,optimizer, epochs, final_model_sav
             print("Parallelizing model")
             net = torch.nn.DataParallel(net)
 
-        cudnn.benchmark = True
+        # !Important: Never switch this ON for multiple span models. Even for plain LSTM based models since model inputs change at each iteration
+        # cudnn.benchmark = True
     rogue_obj = Rouge()
     is_log_wandb = not(wand_project_name is None)
     best_rouge_f1score = 0
     net.train()
+    # T_max is the number of epochs before restart
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=5*2500)
     for epoch in range(epochs):  # loop over the dataset multiple times
         rogue_obj.reset()
         net.train()
@@ -93,6 +96,7 @@ def train_model(net, trainloader, validloader,optimizer, epochs, final_model_sav
             loss=torch.mean(loss)
             loss.backward()
             optimizer.step()
+            scheduler.step()
             running_bleu_score += compute_rogue_and_bluescore(overall_index_to_key,rogue_obj,outputs_seq_ind,labels_seqind)
 
             running_loss += loss.item()
@@ -101,20 +105,14 @@ def train_model(net, trainloader, validloader,optimizer, epochs, final_model_sav
             step_time = cur_time - begin_time
             loader.set_postfix(train_loss=running_loss/(batch_idx + 1),cur_loss=loss.item(),article_dim=data[0].shape[1],summary_dim=data[1].shape[1],
                                blue_score=running_bleu_score/(batch_idx + 1), stime=format_time(step_time))
-            # if(batch_idx>3):
+            # if(batch_idx>1):
             #     break
-
+        
         train_loss = running_loss/(batch_idx + 1)
         train_bleu_score = running_bleu_score/(batch_idx + 1)
         train_roug_scores = rogue_obj.compute()
 
         print("train_loss:{} train_bleu_score:{} train_roug_scores:{} ".format(train_loss,train_bleu_score,train_roug_scores))
-        test_bleu_score, test_roug_scores = evaluate_model(
-            net, validloader,local_vocab_key_to_indx,overall_key_to_index,overall_index_to_key,wordvec_obj_list,vectorizer_func,index_func)
-        print(" valid_bleu_score:{} valid_roug_scores:{}".format(test_bleu_score,test_roug_scores))
-        if(is_log_wandb):
-            wandb.log({"cur_epoch":epoch+1,"train_loss":train_loss,"train_bleu_score": train_bleu_score, "valid_bleu_score": test_bleu_score,"train_roug_scores":train_roug_scores,"valid_roug_scores":test_roug_scores})
-
         per_epoch_model_save_path = final_model_save_path.replace(
             ".pt", "")
         if not os.path.exists(per_epoch_model_save_path):
@@ -122,6 +120,12 @@ def train_model(net, trainloader, validloader,optimizer, epochs, final_model_sav
         per_epoch_model_save_path += "/epoch_{}_dir.pt".format(epoch)
         if(epoch % 1 == 0):
             torch.save(net, per_epoch_model_save_path)
+        test_bleu_score, test_roug_scores = evaluate_model(
+            net, validloader,local_vocab_key_to_indx,overall_key_to_index,overall_index_to_key,wordvec_obj_list,vectorizer_func,index_func)
+        print(" valid_bleu_score:{} valid_roug_scores:{}".format(test_bleu_score,test_roug_scores))
+        if(is_log_wandb):
+            wandb.log({"cur_epoch":epoch+1,"train_loss":train_loss,"train_bleu_score": train_bleu_score, "valid_bleu_score": test_bleu_score,"train_roug_scores":train_roug_scores,"valid_roug_scores":test_roug_scores})
+
         if(test_roug_scores["Rouge-L-F"] >= best_rouge_f1score):
             best_rouge_f1score = test_roug_scores["Rouge-L-F"]
             torch.save(net, final_model_save_path)
@@ -189,7 +193,7 @@ if __name__ == '__main__':
     start_net_path = None
     # start_net_path = "saved_model/LSTM_CNN_Arch/seq2seq_with_attention.pt"
     
-    batch_size = 64
+    batch_size = 128
     epochs = 50
     is_use_cuda = True
     print(STRT)
@@ -249,7 +253,7 @@ if __name__ == '__main__':
         text_sum_model1 = LSTM_CNN_Arch_With_Attention_multiple_span(model_config)
         # text_sum_model1 = LSTM_CNN_Arch_With_Attention(model_config)
 
-    optimizer = optim.Adam(text_sum_model1.parameters(), lr=0.001)
+    optimizer = optim.Adam(text_sum_model1.parameters(), lr=0.01)
     final_model_save_path = "./saved_model/LSTM_CNN_Arch_multiple_span/seq2seq_with_attention.pt"
 
     is_log_wandb = not(wand_project_name is None)
