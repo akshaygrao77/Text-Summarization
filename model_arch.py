@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from utils.data_processing import *
+from concurrent.futures import ThreadPoolExecutor
 
 class LSTM_CNN_Arch_With_Attention(nn.Module):
     def __init__(self, model_config):
@@ -196,30 +197,46 @@ class LSTM_CNN_Arch_With_Attention_multiple_span(nn.Module):
         self.adapt_smax_layer = nn.AdaptiveLogSoftmaxWithLoss(2*dec_hidden_size, vocab_size,cutoffs=[5000*10,5000*25,5000*100,5000*350],div_value=2.0,device=self.device)
         print("self.adapt_smax_layer",sum(p.numel() for p in self.adapt_smax_layer.parameters()))
         # self.classification_layer = nn.Linear(2*enc_hidden_size, vocab_size,device=self.device) This doesn't work since vocab size is massive and this single operation becomes the bottleneck
-        
+
+    def attention_forward(self,objs):
+        dec_out,res_enc = objs
+        enc_out,(_,_) = res_enc
+        tmp_attn,_ = self.attention_layer(query=dec_out, key=enc_out, value=enc_out, need_weights=False)
+        tmp_attn = torch.cat((tmp_attn,dec_out),dim=2)
+        # !!!! It is important to have timestep first dimension in the tensor bcoz the inner loop has N,B hence the memory requirements stay same and predictable as compared to having timestep in the second dimension which results in heavy memory footprint changes
+        tmp_attn = torch.squeeze(torch.transpose(tmp_attn,0,1),0)
+        # print("tmp_attn :{}".format(tmp_attn.size()))
+        return tmp_attn
+
     def forward(self, overall_inp,wordvec_obj_list=None,vectorizer_func=None,index_func=None,local_vocab_key_to_indx=None,overall_key_to_index=None,overall_index_to_key=None):
         enc_w2v_embed,dec_w2v_embed,enc_ind_embed,dec_ind_embed,labels_seqind=overall_inp
         cur_bs_size = enc_w2v_embed.size()[0]
         overall_loss = None
+        use_multithread = False
         # Key attention mask doesn't work for our architecture bcoz CNNs change the number of timesteps in the encoder
         # key_attention_mask = torch.zeros_like(enc_ind_embed,device=self.device,dtype=torch.bool)
         # print("key_attention_mask:{}".format(key_attention_mask.size()))
         # key_attention_mask = torch.where(enc_ind_embed == 0,True,key_attention_mask)
         res_enc = self.encoder(enc_w2v_embed,enc_ind_embed)
         # print("enc_out",enc_out.size())
+        if(use_multithread):
+            exe = ThreadPoolExecutor()
         if dec_w2v_embed is not None:
             dec_out,(_,_) = self.decoder(dec_w2v_embed,dec_ind_embed)
             # print("dec_out",dec_out.size())
-            attn_out = [None]*self.no_of_encs
-            for i,(enc_out,(_,_)) in enumerate(res_enc):
-                tmp_attn,_ = self.attention_layer(query=dec_out, key=enc_out, value=enc_out, need_weights=False)
-                tmp_attn = torch.cat((tmp_attn,dec_out),dim=2)
-                # !!!! It is important to have timestep first dimension in the tensor bcoz the inner loop has N,B hence the memory requirements stay same and predictable as compared to having timestep in the second dimension which results in heavy memory footprint changes
-                tmp_attn = torch.transpose(tmp_attn,0,1)
-                # print("tmp_attn :{}".format(tmp_attn.size()))
-                attn_out[i] = tmp_attn
-            attn_out = torch.stack(attn_out,dim=-1)
-            attn_out = torch.mean(attn_out,dim=-1)
+            if(not use_multithread):
+                attn_out = 0
+                for i,(enc_out,(_,_)) in enumerate(res_enc):
+                    obj = dec_out,(enc_out,(_,_))
+                    attn_out += self.attention_forward(obj)
+            else:
+                tmps=[]
+                attn_out = 0
+                objs = [(dec_out,a) for a in res_enc]
+                result = exe.map(self.attention_forward,objs)
+                for a in result:
+                    attn_out += a
+            attn_out = attn_out / self.no_of_encs
             # print("attn_out :{}".format(attn_out.size()))
             if labels_seqind is not None:
                 labels_seqind = torch.transpose(labels_seqind,0,1)
@@ -268,14 +285,19 @@ class LSTM_CNN_Arch_With_Attention_multiple_span(nn.Module):
                 # print("dec_w2v_embed:{} dec_ind_embed:{}".format(dec_w2v_embed.size(),dec_ind_embed.size()))
 
                 dec_out,(dec_h_out,dec_c_out) = self.decoder(dec_w2v_embed,dec_ind_embed,dec_h_out,dec_c_out)
-                attn_out = [None]*self.no_of_encs
-                for i,(enc_out,(_,_)) in enumerate(res_enc):
-                    tmp_attn,_ = self.attention_layer(query=dec_out, key=enc_out, value=enc_out, need_weights=False)
-                    tmp_attn = torch.squeeze(torch.cat((tmp_attn,dec_out),dim=2),dim=1)
-                    # print("tmp_attn :{}".format(tmp_attn.size()))
-                    attn_out[i] = tmp_attn
-                attn_out = torch.stack(attn_out,dim=-1)
-                attn_out = torch.mean(attn_out,dim=-1)
+                if(not use_multithread):
+                    attn_out = 0
+                    for i,(enc_out,(_,_)) in enumerate(res_enc):
+                        obj = dec_out,(enc_out,(_,_))
+                        attn_out += self.attention_forward(obj)
+                else:
+                    tmps=[]
+                    attn_out = 0
+                    objs = [(dec_out,a) for a in res_enc]
+                    result = exe.map(self.attention_forward,objs)
+                    for a in result:
+                        attn_out += a
+                attn_out = attn_out / self.no_of_encs
                 # print("attn_out :{}".format(attn_out.size()))
                 cur_output = self.adapt_smax_layer.predict(attn_out)
                 # If a sample is marked done, further sequence is replaced by PAD
@@ -293,6 +315,8 @@ class LSTM_CNN_Arch_With_Attention_multiple_span(nn.Module):
                 output = torch.cat((output,pad_seq),dim=0)
             output = torch.transpose(output,0,1)
 
+        if(use_multithread):
+            exe.shutdown()
         return output,overall_loss       
 
 
@@ -312,7 +336,7 @@ class Enc_LSTM_CNN_Arch_multiple_span(nn.Module):
         # 8 denotes the number of words u need to contextualize
         # in_channels is the two embeddings obtained. One from embedding layer and another from Word2Vec
         # The kernel size will reduce the width to length 1 and hence out_channels will become new features and Height become new timesteps
-        self.enc_cnns = nn.ModuleList([nn.Conv2d(in_channels=2, out_channels=enc_input_size, kernel_size=(pow(2,i),embed_size),device=self.device) for i in range(no_of_encs)])
+        self.enc_cnns = nn.ModuleList([nn.Conv2d(in_channels=2, out_channels=enc_input_size, kernel_size=(4*i+1,embed_size),device=self.device) for i in range(no_of_encs)])
     
     def forward(self, enc_w2v_embed,enc_ind_embed):
         enc_ind_embed = enc_ind_embed.to(device=self.device, non_blocking=True)
