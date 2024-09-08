@@ -17,6 +17,7 @@
 8. Adding the STRT, END, UNK and PAD tokens is better handled at each batch rather than the entire dataset because the number of padded tokens reduces if done per batch. This also allows for the shift of inputs for the encoder and decoder on the fly.
 9. AdaptiveLogSoftmax doesn't handle batched inputs. So don't iterate and merge results one batch at a time. This is because it is hard to set a batch size this way to remain inside memory constraints. This is because the number of timesteps might change rapidly from one batch to another, changing memory footprints heavily during training inside adaptive softmax. So, in the adaptive softmax layer, iterate one timestep at a time. With this modification, the memory footprint stays the same inside adaptive softmax from one batch to another.
 10. Local key_to_index and index_to_key mappings are used to learn input embeddings at encoder and decoder modules. This is necessary since global key_to_indx is large and learning that at input embeddings would be too expensive.
+11. **Do not turn on the cudnn.benchmark for RNN-based models since timesteps change from batch to batch, drastically reducing the performance.**
 
 ## Results
 ROUGE-L-F score on (validation set,training set) was (0.25,0.38) and BLEU score on (validation set, training set) was (9.5,15.8)
