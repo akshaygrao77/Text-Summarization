@@ -194,7 +194,7 @@ class LSTM_CNN_Arch_With_Attention_multiple_span(nn.Module):
         # AdaptiveLogSoftmaxWithLoss decreases the compute time drastically when vocab size is massive by forming clusters and doing kind of hierarchical clustering based softmax
         # The cutoffs are set seeing the frequency distribution graph of the W2V vocab words
         # The vocab size is global vocabulary whereas for encoder and decoder inputs vocab size is local vocabulary words(This is necessary bcoz embedding size would be massive otherwise)
-        self.adapt_smax_layer = nn.AdaptiveLogSoftmaxWithLoss(2*dec_hidden_size, vocab_size,cutoffs=[5000*10,5000*25,5000*100,5000*350],div_value=2.0,device=self.device)
+        self.adapt_smax_layer = nn.AdaptiveLogSoftmaxWithLoss(2*dec_hidden_size, vocab_size,cutoffs=[5000*5,5000*10],div_value=4.0,device=self.device)
         print("self.adapt_smax_layer",sum(p.numel() for p in self.adapt_smax_layer.parameters()))
         # self.classification_layer = nn.Linear(2*enc_hidden_size, vocab_size,device=self.device) This doesn't work since vocab size is massive and this single operation becomes the bottleneck
 

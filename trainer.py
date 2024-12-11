@@ -74,8 +74,8 @@ def train_model(net, trainloader, validloader,optimizer, epochs, final_model_sav
     best_rouge_f1score = 0
     net.train()
     # T_max is the number of epochs before restart
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=5*2500)
-    for epoch in range(epochs):  # loop over the dataset multiple times
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=2*2250,eta_min=0.00001)
+    for epoch in range(26,epochs):  # loop over the dataset multiple times
         rogue_obj.reset()
         net.train()
 
@@ -104,7 +104,7 @@ def train_model(net, trainloader, validloader,optimizer, epochs, final_model_sav
             cur_time = time.time()
             step_time = cur_time - begin_time
             loader.set_postfix(train_loss=running_loss/(batch_idx + 1),cur_loss=loss.item(),article_dim=data[0].shape[1],summary_dim=data[1].shape[1],
-                               blue_score=running_bleu_score/(batch_idx + 1), stime=format_time(step_time))
+                               blue_score=running_bleu_score/(batch_idx + 1), stime=format_time(step_time),clr=round(scheduler.get_last_lr()[0],5))
             # if(batch_idx>1):
             #     break
         
@@ -113,6 +113,8 @@ def train_model(net, trainloader, validloader,optimizer, epochs, final_model_sav
         train_roug_scores = rogue_obj.compute()
 
         print("train_loss:{} train_bleu_score:{} train_roug_scores:{} ".format(train_loss,train_bleu_score,train_roug_scores))
+        if(is_log_wandb):
+            wandb.log({"cur_epoch":epoch+1,"train_loss":train_loss,"train_bleu_score": train_bleu_score, "train_roug_scores":train_roug_scores})
         per_epoch_model_save_path = final_model_save_path.replace(
             ".pt", "")
         if not os.path.exists(per_epoch_model_save_path):
@@ -120,15 +122,16 @@ def train_model(net, trainloader, validloader,optimizer, epochs, final_model_sav
         per_epoch_model_save_path += "/epoch_{}_dir.pt".format(epoch)
         if(epoch % 1 == 0):
             torch.save(net, per_epoch_model_save_path)
-        test_bleu_score, test_roug_scores = evaluate_model(
-            net, validloader,local_vocab_key_to_indx,overall_key_to_index,overall_index_to_key,wordvec_obj_list,vectorizer_func,index_func)
-        print(" valid_bleu_score:{} valid_roug_scores:{}".format(test_bleu_score,test_roug_scores))
-        if(is_log_wandb):
-            wandb.log({"cur_epoch":epoch+1,"train_loss":train_loss,"train_bleu_score": train_bleu_score, "valid_bleu_score": test_bleu_score,"train_roug_scores":train_roug_scores,"valid_roug_scores":test_roug_scores})
+        if(epoch % 7 == 0):
+            test_bleu_score, test_roug_scores = evaluate_model(
+                net, validloader,local_vocab_key_to_indx,overall_key_to_index,overall_index_to_key,wordvec_obj_list,vectorizer_func,index_func)
+            print(" valid_bleu_score:{} valid_roug_scores:{}".format(test_bleu_score,test_roug_scores))
+            if(is_log_wandb):
+                wandb.log({"cur_epoch":epoch+1, "valid_bleu_score": test_bleu_score,"valid_roug_scores":test_roug_scores})
 
-        if(test_roug_scores["Rouge-L-F"] >= best_rouge_f1score):
-            best_rouge_f1score = test_roug_scores["Rouge-L-F"]
-            torch.save(net, final_model_save_path)
+            if(test_roug_scores["Rouge-L-F"] >= best_rouge_f1score):
+                best_rouge_f1score = test_roug_scores["Rouge-L-F"]
+                torch.save(net, final_model_save_path)
 
     print('Finished Training: Best saved model test best_rouge_f1score is:', best_rouge_f1score)
     return best_rouge_f1score, torch.load(final_model_save_path)
@@ -191,9 +194,9 @@ if __name__ == '__main__':
     index_func = convert_tokens_to_indices
 
     start_net_path = None
-    # start_net_path = "saved_model/LSTM_CNN_Arch/seq2seq_with_attention.pt"
+    start_net_path = "./saved_model/LSTM_CNN_Arch_multiple_span_3_enc_omit_97/seq2seq_with_attention/epoch_26_dir.pt"
     
-    batch_size = 128
+    batch_size = 256
     epochs = 50
     is_use_cuda = True
     print(STRT)
@@ -224,7 +227,7 @@ if __name__ == '__main__':
     assert all([local_vocab_key_to_indx[local_vocab_indx_to_key[i]]==i for i in range(local_vocab_size)])
     word2vec_obj_list = vocab_dict["word2vec_obj_list"]
     w2v_vec_size = sum([len(obj[STRT]) for obj in word2vec_obj_list])
-    overall_key_to_index,overall_index_to_key = form_overall_key_to_index(word2vec_obj_list,freq_local_vocab,local_vocab_key_to_indx,percentile_to_omit_in_w2v=15)
+    overall_key_to_index,overall_index_to_key = form_overall_key_to_index(word2vec_obj_list,freq_local_vocab,local_vocab_key_to_indx,percentile_to_omit_in_w2v=97)
     vocab_size = len(overall_key_to_index)
     print("overall_index_to_key ",overall_index_to_key[:100])
 
@@ -241,7 +244,7 @@ if __name__ == '__main__':
             valid_ts_spacy_ds, shuffle=False, pin_memory=False, num_workers=4, batch_size=batch_size,collate_fn=custom_collate)
     
     print("local_vocab_size:{} vocab_size:{}".format(local_vocab_size,vocab_size))
-    model_config = {"no_of_encs":4,"num_enc_lstm_layers":3,"embed_size":w2v_vec_size,"enc_input_size":250,"enc_hidden_size":256,"local_vocab_size":local_vocab_size,"vocab_size":vocab_size,"num_dec_lstm_layers":4,"dec_hidden_size":220,"is_use_cuda":is_use_cuda}
+    model_config = {"no_of_encs":3,"num_enc_lstm_layers":4,"embed_size":w2v_vec_size,"enc_input_size":250,"enc_hidden_size":360,"local_vocab_size":local_vocab_size,"vocab_size":vocab_size,"num_dec_lstm_layers":4,"dec_hidden_size":320,"is_use_cuda":is_use_cuda}
     
     if(model_config["enc_hidden_size"] % model_config["no_of_encs"] != 0):
         raise Exception("Invalid no_of_encs:{} or enc_hidden_size:{}".format(no_of_encs,enc_hidden_size))
@@ -253,8 +256,8 @@ if __name__ == '__main__':
         text_sum_model1 = LSTM_CNN_Arch_With_Attention_multiple_span(model_config)
         # text_sum_model1 = LSTM_CNN_Arch_With_Attention(model_config)
 
-    optimizer = optim.Adam(text_sum_model1.parameters(), lr=0.01)
-    final_model_save_path = "./saved_model/LSTM_CNN_Arch_multiple_span/seq2seq_with_attention.pt"
+    optimizer = optim.Adam(text_sum_model1.parameters(), lr=0.0005)
+    final_model_save_path = "./saved_model/LSTM_CNN_Arch_multiple_span_3_enc_omit_97/seq2seq_with_attention.pt"
 
     is_log_wandb = not(wand_project_name is None)
     if(is_log_wandb):
